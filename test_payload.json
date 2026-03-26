@@ -1,0 +1,8 @@
+{
+    "userId": "test-user-001",
+    "deviceId": "device-001",
+    "sensorType": "motion",
+    "value": 1,
+    "timestamp": 1774566324,
+    "location": "living_room"
+}

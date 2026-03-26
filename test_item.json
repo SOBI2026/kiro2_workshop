@@ -1,0 +1,9 @@
+{
+    "userId": {"S": "test-user-001"},
+    "timestamp": {"N": "1774566400"},
+    "deviceId": {"S": "device-001"},
+    "sensorType": {"S": "motion"},
+    "value": {"N": "1"},
+    "location": {"S": "living_room"},
+    "ttl": {"N": "1777158400"}
+}

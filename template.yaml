@@ -1,0 +1,477 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Senior Care Monitoring System - Serverless Application
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 512
+    Environment:
+      Variables:
+        DYNAMODB_SENSOR_DATA_TABLE: !Ref SensorDataTable
+        DYNAMODB_USER_SETTINGS_TABLE: !Ref UserSettingsTable
+        DYNAMODB_ALERT_HISTORY_TABLE: !Ref AlertHistoryTable
+        RDS_SECRET_ARN: !Ref RDSSecret
+        SNS_ALERT_TOPIC_ARN: !Ref AlertNotificationTopic
+        SNS_REPORT_TOPIC_ARN: !Ref DailyReportTopic
+        SQS_NOTIFICATION_QUEUE_URL: !Ref NotificationQueue
+        REPORTS_BUCKET_NAME: !Ref ReportsBucket
+
+Resources:
+  # DynamoDB Tables
+  SensorDataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SeniorCare-SensorData
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+        - AttributeName: deviceId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: deviceId-timestamp-index
+          KeySchema:
+            - AttributeName: deviceId
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+
+  UserSettingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SeniorCare-UserSettings
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: lastActivityTime
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: status-lastActivityTime-index
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: lastActivityTime
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+
+  AlertHistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SeniorCare-AlertHistory
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: alertId
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: alertId
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: status-createdAt-index
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+
+  # RDS PostgreSQL Database
+  RDSSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: SeniorCare-RDS-Credentials
+      Description: RDS PostgreSQL credentials
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "seniorcare_admin"}'
+        GenerateStringKey: password
+        PasswordLength: 32
+        ExcludeCharacters: '"@/\'
+      KmsKeyId: alias/aws/secretsmanager
+
+  # Note: RDS instance should be created separately with proper VPC configuration
+  # For development, you can use RDS with public access or create VPC resources manually
+
+  # S3 Bucket for Reports
+  ReportsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'senior-care-reports-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: MoveToGlacierAfter12Months
+            Status: Enabled
+            Prefix: reports/
+            Transitions:
+              - TransitionInDays: 365
+                StorageClass: GLACIER
+            ExpirationInDays: 730
+          - Id: DeleteBackupsAfter1Year
+            Status: Enabled
+            Prefix: backups/
+            Transitions:
+              - TransitionInDays: 90
+                StorageClass: GLACIER
+            ExpirationInDays: 365
+
+  # SNS Topics
+  AlertNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: SeniorCare-AlertNotification
+      DisplayName: Senior Care Alert Notifications
+      KmsMasterKeyId: alias/aws/sns
+
+  DailyReportTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: SeniorCare-DailyReport
+      DisplayName: Senior Care Daily Reports
+      KmsMasterKeyId: alias/aws/sns
+
+  SystemAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: SeniorCare-SystemAlert
+      DisplayName: Senior Care System Alerts
+      KmsMasterKeyId: alias/aws/sns
+
+  # SQS Queues
+  NotificationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: SeniorCare-NotificationQueue
+      VisibilityTimeout: 300
+      MessageRetentionPeriod: 1209600
+      ReceiveMessageWaitTimeSeconds: 20
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: 3
+      KmsMasterKeyId: alias/aws/sqs
+
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: SeniorCare-DeadLetterQueue
+      MessageRetentionPeriod: 1209600
+      KmsMasterKeyId: alias/aws/sqs
+
+  # Lambda Functions
+  SensorDataProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: SeniorCare-SensorDataProcessor
+      CodeUri: src/sensor_data_processor/
+      Handler: app.lambda_handler
+      Timeout: 10
+      MemorySize: 512
+      EventInvokeConfig:
+        MaximumRetryAttempts: 2
+        DestinationConfig:
+          OnFailure:
+            Type: SNS
+            Destination: !Ref SystemAlertTopic
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SensorDataTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UserSettingsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref RDSSecret
+      Events:
+        SensorDataApi:
+          Type: Api
+          Properties:
+            Path: /sensor-data
+            Method: post
+            RestApiId: !Ref SeniorCareApi
+
+  InactivityDetectorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: SeniorCare-InactivityDetector
+      CodeUri: src/inactivity_detector/
+      Handler: app.lambda_handler
+      Timeout: 60
+      MemorySize: 1024
+      EventInvokeConfig:
+        MaximumRetryAttempts: 2
+        DestinationConfig:
+          OnFailure:
+            Type: SNS
+            Destination: !Ref SystemAlertTopic
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref UserSettingsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AlertHistoryTable
+        - LambdaInvokePolicy:
+            FunctionName: !Ref VoiceResponseHandlerFunction
+      Events:
+        ScheduledCheck:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+            Enabled: true
+
+  VoiceResponseHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: SeniorCare-VoiceResponseHandler
+      CodeUri: src/voice_response_handler/
+      Handler: app.lambda_handler
+      Timeout: 90
+      MemorySize: 512
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref UserSettingsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AlertHistoryTable
+        - LambdaInvokePolicy:
+            FunctionName: !Ref NotificationManagerFunction
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref RDSSecret
+      Events:
+        VoiceResponseApi:
+          Type: Api
+          Properties:
+            Path: /voice-response
+            Method: post
+            RestApiId: !Ref SeniorCareApi
+
+  NotificationManagerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: SeniorCare-NotificationManager
+      CodeUri: src/notification_manager/
+      Handler: app.lambda_handler
+      Timeout: 15
+      MemorySize: 512
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AlertHistoryTable
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt AlertNotificationTopic.TopicName
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt NotificationQueue.QueueName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref RDSSecret
+      Events:
+        EmergencyApi:
+          Type: Api
+          Properties:
+            Path: /emergency
+            Method: post
+            RestApiId: !Ref SeniorCareApi
+        NotificationQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt NotificationQueue.Arn
+            BatchSize: 10
+
+  ReportGeneratorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: SeniorCare-ReportGenerator
+      CodeUri: src/report_generator/
+      Handler: app.lambda_handler
+      Timeout: 300
+      MemorySize: 2048
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref ReportsBucket
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt DailyReportTopic.TopicName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref RDSSecret
+      Events:
+        DailyReportSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 0 * * ? *)
+            Enabled: true
+        MonthlyReportSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 0 1 * ? *)
+            Enabled: true
+
+  SettingsManagerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: SeniorCare-SettingsManager
+      CodeUri: src/settings_manager/
+      Handler: app.lambda_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UserSettingsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref RDSSecret
+      Events:
+        SettingsApi:
+          Type: Api
+          Properties:
+            Path: /settings
+            Method: put
+            RestApiId: !Ref SeniorCareApi
+
+  ActivityHistoryQueryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: SeniorCare-ActivityHistoryQuery
+      CodeUri: src/activity_history_query/
+      Handler: app.lambda_handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref RDSSecret
+      Events:
+        ActivityHistoryApi:
+          Type: Api
+          Properties:
+            Path: /activity-history
+            Method: get
+            RestApiId: !Ref SeniorCareApi
+
+  # API Gateway
+  SeniorCareApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: SeniorCare-API
+      StageName: prod
+      Auth:
+        DefaultAuthorizer: AWS_IAM
+      Cors:
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"
+      MinimumCompressionSize: 1024
+      EndpointConfiguration:
+        Type: REGIONAL
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          MetricsEnabled: true
+
+  # CloudWatch Alarms
+  ErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: SeniorCare-HighErrorRate
+      AlarmDescription: Triggers when error rate exceeds 5% over 5 minutes
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0.05
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref SystemAlertTopic
+
+  DLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: SeniorCare-DLQMessages
+      AlarmDescription: Triggers when messages arrive in DLQ
+      MetricName: ApproximateNumberOfMessagesVisible
+      Namespace: AWS/SQS
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt DeadLetterQueue.QueueName
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref SystemAlertTopic
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${SeniorCareApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+  
+  SensorDataTableName:
+    Description: DynamoDB SensorData table name
+    Value: !Ref SensorDataTable
+  
+  UserSettingsTableName:
+    Description: DynamoDB UserSettings table name
+    Value: !Ref UserSettingsTable
+  
+  AlertHistoryTableName:
+    Description: DynamoDB AlertHistory table name
+    Value: !Ref AlertHistoryTable
+  
+  RDSSecretArn:
+    Description: RDS Secret ARN (configure RDS separately)
+    Value: !Ref RDSSecret
+  
+  ReportsBucketName:
+    Description: S3 Reports bucket name
+    Value: !Ref ReportsBucket
