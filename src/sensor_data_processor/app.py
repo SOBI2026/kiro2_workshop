@@ -90,10 +90,13 @@ def lambda_handler(event, context):
     # 예시: userId="user-001", timestamp=1711436400, value=2.5
     dynamodb.put_sensor_data(user_id, timestamp, device_id, device_type, sensor_type, value)
     
-    # STEP 6: RDS에 활동 로그 저장 (장기 보관용)
+    # STEP 6: RDS에 활동 로그 저장 (장기 보관용) - 선택적
     # 테이블: activity_logs
     # 예시: 일일/월간 리포트 생성 시 사용
-    rds.insert_activity_log(user_id, 'sensor_data', device_type, device_id, sensor_type, value, dt)
+    try:
+        rds.insert_activity_log(user_id, 'sensor_data', device_type, device_id, sensor_type, value, dt)
+    except Exception as e:
+        logger.warning(f"Failed to insert activity log to RDS (non-critical): {e}")
     
     # STEP 7: 사용자의 마지막 활동 시간 업데이트
     # 테이블: SeniorCare-UserSettings

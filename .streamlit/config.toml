@@ -1,0 +1,11 @@
+[client]
+# Deploy 버튼 숨기기
+toolbarMode = "minimal"
+
+[server]
+# 파일 감시 비활성화 (성능 향상)
+fileWatcherType = "none"
+
+[browser]
+# 자동으로 브라우저 열기
+gatherUsageStats = false

@@ -1,0 +1,11 @@
+$env:PYTHONIOENCODING="utf-8"
+$env:AWS_DEFAULT_REGION="us-east-1"
+$env:AWS_ACCESS_KEY_ID="ASIARNU6IL25HZA7SKDZ"
+$env:AWS_SECRET_ACCESS_KEY="2zfsNwTc2xWkLPUnHFYmy5eHWpMzOPlGhD5zI9v1"
+$env:AWS_SESSION_TOKEN="IQoJb3JpZ2luX2VjEAkaCXVzLWVhc3QtMSJHMEUCIF7pPuRi9r2hwQ0NavgkLyPUuQtk4ypNYfYQQGMzUithAiEA4rdwzVTJjqYEqGgzExDdzrhUIxp/osANte62BLswYRwqogII0f//////////ARAAGgwwOTgwNDI0MDQ1MzgiDNx0GgXpcZ956YMskyr2ASQKD0F+Et6JUJQIsmxL6gpVEfeyacKqU0IPyz/BAQxLYof4zDRphCQQo6xQC3ybpcEatx3AIiq7bp46Di9o4S9Iji+p/5EiS/OtyUB9kS6aL5OVC9OutxXUrIhIjAKCKcov/I+zsz1Rxsk5irnGjX3u1BdjaXjBBGmHM9Y7WadfX1IaU1M4Ux7qPXqE/MYLEaUvUDb0GqeVSECWP+1z/kNq6WX7IeW+r9HGs7/8uLkPyJvpJ/xMeH4/R8TMJrSQYSXLjGOOu2ggyHSeHfVBrvz3AhRMGW95zz2L6oimYdgQgmCMQNXrMtLQjObVPic8MEi9a/1HyzD2l5fOBjqdAS6lw1cpzUsA5OVPYAXJFCTZnfmHJmBEcMQk6Cypc2gVAMZf4zrF7gSZPAkbVsIe0gvbybLbbzEzG3asuySv7bt2GUu0vpi15pTPDTLXPWU0XGKZNWeVkEooUt/xgE1KPnwXWtJC5alGu2+FmdsVd7eQ2MrzGlemusSX+jebMaxo7jiWZpGYREiOrV3RxeaHHD513hYevd/pYbLZe/8="
+
+Write-Host "Starting Streamlit dashboard..."
+Write-Host "URL: http://localhost:8501"
+
+Set-Location $PSScriptRoot
+& ..\. venv\Scripts\python.exe -m streamlit run app.py --server.port 8501

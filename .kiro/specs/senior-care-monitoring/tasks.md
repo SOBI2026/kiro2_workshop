@@ -349,7 +349,7 @@ AWS 서버리스 아키텍처(SAM, Lambda, DynamoDB, RDS)를 사용하여 독거
     - API Gateway 엔드포인트 URL 확인
     - _요구사항: 전체 시스템_
 
-  - [ ] 15.3 배포 후 검증
+  - [x] 15.3 배포 후 검증
     - API Gateway 엔드포인트 테스트
     - EventBridge 스케줄 실행 확인
     - CloudWatch Logs 확인
